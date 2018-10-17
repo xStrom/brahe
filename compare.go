@@ -27,12 +27,12 @@ import (
 )
 
 func main() {
-	entries := []string{"G:\\TestA", "G:\\TestB", "G:\\TestC"}
-	compareDir(entries)
+	entries := []string{"N:\\", "F:\\"}
+	compareDir(entries, true)
 	fmt.Printf("OK All done! :)\n")
 }
 
-func compareDir(names []string) {
+func compareDir(names []string, haysearch bool) {
 	// Get the file list for this directory
 	allFileInfos := make([][]os.FileInfo, len(names))
 	for idx, name := range names {
@@ -46,12 +46,6 @@ func compareDir(names []string) {
 
 	// Make sure they match
 	fiCount := len(allFileInfos[0])
-	for i := 1; i < len(allFileInfos); i++ {
-		if len(allFileInfos[i]) != fiCount {
-			fmt.Printf("Failed file count! %v - %v - %v\n", i, fiCount, len(allFileInfos[i]))
-			panic("")
-		}
-	}
 
 	for i := 0; i < fiCount; i++ {
 		name := allFileInfos[0][i].Name()
@@ -59,20 +53,27 @@ func compareDir(names []string) {
 		allNames := make([]string, 0, len(allFileInfos))
 		allNames = append(allNames, filepath.Join(names[0], name))
 		for j := 1; j < len(allFileInfos); j++ {
-			n := allFileInfos[j][i].Name()
-			if n != name {
-				fmt.Printf("Failed name check! %v - %v - %v - %v\n", j, i, name, allFileInfos[j][i].Name())
+			found := false
+			for k := 0; k < len(allFileInfos[j]); k++ {
+				n := allFileInfos[j][k].Name()
+				if n == name {
+					found = true
+					if allFileInfos[j][k].IsDir() != isDir {
+						fmt.Printf("Failed dir check! %v - %v - %v - %v - %v\n", j, i, k, isDir, allFileInfos[j][k].IsDir())
+						panic("")
+					}
+					allNames = append(allNames, filepath.Join(names[j], n))
+					break
+				}
+			}
+			if !found {
+				fmt.Printf("Failed to locate! %v\\%v\n", names[j], name)
 				panic("")
 			}
-			if allFileInfos[j][i].IsDir() != isDir {
-				fmt.Printf("Failed dir check! %v - %v - %v - %v\n", j, i, isDir, allFileInfos[j][i].IsDir())
-				panic("")
-			}
-			allNames = append(allNames, filepath.Join(names[j], n))
 		}
 
 		if isDir {
-			compareDir(allNames)
+			compareDir(allNames, haysearch)
 		} else {
 			// Compare file hashes
 			hashes := make([][]byte, len(allNames))
