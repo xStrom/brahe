@@ -15,34 +15,87 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 var ignoreNames = map[string]bool{}
 
+// NOTE: Also returns false in case of EOF (e.g. Ctrl+C)
+func askBool(question string) bool {
+	fmt.Printf("%v (Y/N) - ", question)
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		answer := strings.ToLower(scanner.Text())
+		if answer == "n" {
+			return false
+		} else if answer == "y" {
+			return true
+		}
+		fmt.Printf("%v (Y/N) - ", question)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("\nScan failed: %v\n", err)
+	}
+	return false
+}
+
 func main() {
-	entries := []string{"F:\\", "E:\\B\\"}
-	for _, entry := range entries {
-		ignoreNames[filepath.Join(entry, "$RECYCLE.BIN")] = true
-		ignoreNames[filepath.Join(entry, "System Volume Information")] = true
+	var checkHash, ignoreSysNames bool
+	flag.BoolVar(&checkHash, "data", true, "Compare the file contents")
+	flag.BoolVar(&ignoreSysNames, "ignore-system-names", true, "Ignore system names like $RECYCLE.BIN and System Volume Information")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [source] [target1] .. [targetN]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+	args := flag.Args()
+	if len(args) < 2 {
+		flag.Usage()
+		return
+	}
+	var entries []string
+	for i := range args {
+		entry, err := filepath.Abs(args[i])
+		if err != nil {
+			fmt.Printf("Invalid path? %v\n", args[i])
+			panic("")
+		}
+		entries = append(entries, entry)
+	}
+	for i := range entries {
+		header := "   Source"
+		if i > 0 {
+			header = fmt.Sprintf("Target #%d", i)
+		}
+		fmt.Printf("%v: %v\n", header, entries[i])
+	}
+	if !askBool("Start comparing?") {
+		return
+	}
+	fmt.Printf("Starting work ..\n")
+	if ignoreSysNames {
+		for _, entry := range entries {
+			ignoreNames[filepath.Join(entry, "$RECYCLE.BIN")] = true
+			ignoreNames[filepath.Join(entry, "$Recycle.Bin")] = true
+			ignoreNames[filepath.Join(entry, "System Volume Information")] = true
+		}
 	}
 	compareDir(entries, false)
 	fmt.Printf("OK All done! :)\n")
 }
 
-// TODO: Add back haystack option and make it work -- but differently in that, error on extra files in target dirs if the option isn't set
-
-// TODO: Add command line parameter parsing for paths and options
-
-// TODO: Support multiple paths, as [options] [truth] [target1] ... [targetN]
+// TODO: Add back strict non-haystack check (for excessive files in target directories that don't exist in source)
 
 // TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
 
