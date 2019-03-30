@@ -26,17 +26,31 @@ import (
 	"time"
 )
 
+var ignoreNames = map[string]bool{}
+
 func main() {
-	entries := []string{"N:\\", "F:\\"}
-	compareDir(entries, true)
+	entries := []string{"F:\\", "E:\\B\\"}
+	for _, entry := range entries {
+		ignoreNames[filepath.Join(entry, "$RECYCLE.BIN")] = true
+		ignoreNames[filepath.Join(entry, "System Volume Information")] = true
+	}
+	compareDir(entries, false)
 	fmt.Printf("OK All done! :)\n")
 }
 
-func compareDir(names []string, haysearch bool) {
+// TODO: Add back haystack option and make it work -- but differently in that, error on extra files in target dirs if the option isn't set
+
+// TODO: Add command line parameter parsing for paths and options
+
+// TODO: Support multiple paths, as [options] [truth] [target1] ... [targetN]
+
+// TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
+
+func compareDir(dirNames []string, checkHash bool) {
 	// Get the file list for this directory
-	allFileInfos := make([][]os.FileInfo, len(names))
-	for idx, name := range names {
-		files, err := ioutil.ReadDir(name)
+	allFileInfos := make([][]os.FileInfo, len(dirNames))
+	for idx, dirName := range dirNames {
+		files, err := ioutil.ReadDir(dirName)
 		if err != nil {
 			fmt.Printf("ReadDir failed: %v\n", err)
 			panic("")
@@ -49,10 +63,15 @@ func compareDir(names []string, haysearch bool) {
 
 	for i := 0; i < fiCount; i++ {
 		name := allFileInfos[0][i].Name()
+		fullName := filepath.Join(dirNames[0], name)
+		if ignoreNames[fullName] {
+			continue
+		}
 		isDir := allFileInfos[0][i].IsDir()
 		allNames := make([]string, 0, len(allFileInfos))
-		allNames = append(allNames, filepath.Join(names[0], name))
+		allNames = append(allNames, fullName)
 		for j := 1; j < len(allFileInfos); j++ {
+			searchName := filepath.Join(dirNames[j], name)
 			found := false
 			for k := 0; k < len(allFileInfos[j]); k++ {
 				n := allFileInfos[j][k].Name()
@@ -62,19 +81,19 @@ func compareDir(names []string, haysearch bool) {
 						fmt.Printf("Failed dir check! %v - %v - %v - %v - %v\n", j, i, k, isDir, allFileInfos[j][k].IsDir())
 						panic("")
 					}
-					allNames = append(allNames, filepath.Join(names[j], n))
+					allNames = append(allNames, searchName)
 					break
 				}
 			}
 			if !found {
-				fmt.Printf("Failed to locate! %v\\%v\n", names[j], name)
+				fmt.Printf("Failed to locate! %v\n", searchName)
 				panic("")
 			}
 		}
 
 		if isDir {
-			compareDir(allNames, haysearch)
-		} else {
+			compareDir(allNames, checkHash)
+		} else if checkHash {
 			// Compare file hashes
 			hashes := make([][]byte, len(allNames))
 			speeds := make([]float64, len(allNames))
