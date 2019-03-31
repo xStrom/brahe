@@ -109,6 +109,10 @@ func writeToConsole(format string, a ...interface{}) {
 	displayInfo.lock.RUnlock()
 }
 
+func reportMismatch(format string, a ...interface{}) {
+	writeToConsole(format, a...)
+}
+
 func displayProgress(info string) {
 	info = ensureLineWidths(info)
 	info = strings.Replace(info, "\n", "", -1)

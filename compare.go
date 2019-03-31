@@ -85,7 +85,7 @@ func main() {
 	}
 
 	// NOTE: From here on out, we no longer directly use fmt.Printf
-	writeToConsole("Starting work ..\n")
+	writeToConsole("Starting work ..")
 	displayInfo.Show()
 	shutdown.AddWorkers(1)
 	go statsGalore()
@@ -116,7 +116,7 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 	for idx, dirName := range dirNames {
 		files, err := ioutil.ReadDir(dirName)
 		if err != nil {
-			writeToConsole("ReadDir failed: %v\n", err)
+			writeToConsole("ReadDir failed: %v", err)
 			panic("")
 		}
 		allFileInfos[idx] = append(allFileInfos[idx], files...)
@@ -151,29 +151,34 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 		allNames = append(allNames, fullName)
 		for j := 1; j < len(allFileInfos); j++ {
 			searchName := filepath.Join(dirNames[j], name)
-			found := false
+			found, dirMismatch := false, false
 			for k := 0; k < len(allFileInfos[j]); k++ {
 				n := allFileInfos[j][k].Name()
 				if n == name {
-					found = true
-					if allFileInfos[j][k].IsDir() != isDir {
-						writeToConsole("Failed dir check! %v - %v - %v - %v - %v\n", j, i, k, isDir, allFileInfos[j][k].IsDir())
-						panic("")
+					if allFileInfos[j][k].IsDir() == isDir {
+						found = true
+						allNames = append(allNames, searchName)
+					} else {
+						dirMismatch = true
+						if isDir {
+							reportMismatch("EXPECTED DIR %v", searchName)
+						} else {
+							reportMismatch("EXPECTED FILE %v", searchName)
+						}
 					}
-					allNames = append(allNames, searchName)
 					break
 				}
 			}
-			if !found {
-				writeToConsole("Failed to locate! %v\n", searchName)
-				panic("")
+			if !found && !dirMismatch {
+				reportMismatch("MISSING %v", searchName)
 			}
 		}
 
-		if isDir {
-			compareDir(allNames, progressChunk, checkHash)
-		} else {
-			if checkHash {
+		if len(allNames) > 1 {
+			if isDir {
+				compareDir(allNames, progressChunk, checkHash)
+				continue // Progress was already incremented by compareDir
+			} else if checkHash {
 				// Compare file hashes
 				hashes := make([][]byte, len(allNames))
 				speeds := make([]float64, len(allNames))
@@ -192,8 +197,7 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 				avgSpeed := speeds[0]
 				for j := 1; j < len(hashes); j++ {
 					if !bytes.Equal(hash, hashes[j]) {
-						writeToConsole("Hash wrong for file: %v - Expected %x - Got %x\n", allNames[j], hash, hashes[j])
-						panic("")
+						reportMismatch("WRONG HASH %v", allNames[j])
 					}
 					avgSpeed += speeds[j]
 				}
@@ -201,10 +205,11 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 
 				//writeToConsole("OK %.4f MB/s %x %v\n", avgSpeed, hash, allNames[0])
 			}
-			stats.lock.Lock()
-			stats.progress += progressChunk
-			stats.lock.Unlock()
 		}
+		// Increment the progress
+		stats.lock.Lock()
+		stats.progress += progressChunk
+		stats.lock.Unlock()
 	}
 
 	stats.lock.Lock()
