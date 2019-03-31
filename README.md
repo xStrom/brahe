@@ -9,10 +9,10 @@ You define a source directory (the source of truth) and then any number of targe
 ```
 compare [options] [source] [target1] .. [targetN]
 
-  -data
-        Compare the file contents (default true)
-  -ignore-system-names
-        Ignore system names like $RECYCLE.BIN and System Volume Information (default true)
+  -no-data
+        Don't compare the file contents
+  -system-names
+        Also check system names like $RECYCLE.BIN and System Volume Information
 ```
 
 # Project status

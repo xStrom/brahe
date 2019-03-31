@@ -1,4 +1,4 @@
-// Copyright 2016 Kaur Kuut
+// Copyright 2016-2019 Kaur Kuut
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -51,9 +51,9 @@ func askBool(question string) bool {
 }
 
 func main() {
-	var checkHash, ignoreSysNames bool
-	flag.BoolVar(&checkHash, "data", true, "Compare the file contents")
-	flag.BoolVar(&ignoreSysNames, "ignore-system-names", true, "Ignore system names like $RECYCLE.BIN and System Volume Information")
+	var noData, checkSysNames bool
+	flag.BoolVar(&noData, "no-data", false, "Don't compare the file contents")
+	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN and System Volume Information")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [source] [target1] .. [targetN]\n", os.Args[0])
 		flag.PrintDefaults()
@@ -83,29 +83,40 @@ func main() {
 	if !askBool("Start comparing?") {
 		return
 	}
-	fmt.Printf("Starting work ..\n")
-	if ignoreSysNames {
+
+	// NOTE: From here on out, we no longer directly use fmt.Printf
+	writeToConsole("Starting work ..\n")
+	displayInfo.Show()
+	shutdown.AddWorkers(1)
+	go statsGalore()
+
+	if !checkSysNames {
 		for _, entry := range entries {
 			ignoreNames[filepath.Join(entry, "$RECYCLE.BIN")] = true
 			ignoreNames[filepath.Join(entry, "$Recycle.Bin")] = true
 			ignoreNames[filepath.Join(entry, "System Volume Information")] = true
+			ignoreNames[filepath.Join(entry, "found.000")] = true
 		}
 	}
-	compareDir(entries, false)
-	fmt.Printf("OK All done! :)\n")
+
+	compareDir(entries, 100.0, !noData)
+
+	displayInfo.Hide()
+	shutdown.Start()
+	shutdown.Wait()
 }
 
 // TODO: Add back strict non-haystack check (for excessive files in target directories that don't exist in source)
 
 // TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
 
-func compareDir(dirNames []string, checkHash bool) {
+func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 	// Get the file list for this directory
 	allFileInfos := make([][]os.FileInfo, len(dirNames))
 	for idx, dirName := range dirNames {
 		files, err := ioutil.ReadDir(dirName)
 		if err != nil {
-			fmt.Printf("ReadDir failed: %v\n", err)
+			writeToConsole("ReadDir failed: %v\n", err)
 			panic("")
 		}
 		allFileInfos[idx] = append(allFileInfos[idx], files...)
@@ -114,12 +125,27 @@ func compareDir(dirNames []string, checkHash bool) {
 	// Make sure they match
 	fiCount := len(allFileInfos[0])
 
+	var progressChunk float64
+	if fiCount > 0 {
+		progressChunk = progressValue / float64(fiCount)
+	}
+	progressExtra := progressValue - progressChunk*float64(fiCount)
+	// TODO: Divide it even more by all the entries?
+
 	for i := 0; i < fiCount; i++ {
 		name := allFileInfos[0][i].Name()
 		fullName := filepath.Join(dirNames[0], name)
 		if ignoreNames[fullName] {
+			stats.lock.Lock()
+			stats.progress += progressChunk
+			stats.lock.Unlock()
 			continue
 		}
+
+		stats.lock.Lock()
+		stats.currentPath = fullName
+		stats.lock.Unlock()
+
 		isDir := allFileInfos[0][i].IsDir()
 		allNames := make([]string, 0, len(allFileInfos))
 		allNames = append(allNames, fullName)
@@ -131,7 +157,7 @@ func compareDir(dirNames []string, checkHash bool) {
 				if n == name {
 					found = true
 					if allFileInfos[j][k].IsDir() != isDir {
-						fmt.Printf("Failed dir check! %v - %v - %v - %v - %v\n", j, i, k, isDir, allFileInfos[j][k].IsDir())
+						writeToConsole("Failed dir check! %v - %v - %v - %v - %v\n", j, i, k, isDir, allFileInfos[j][k].IsDir())
 						panic("")
 					}
 					allNames = append(allNames, searchName)
@@ -139,42 +165,52 @@ func compareDir(dirNames []string, checkHash bool) {
 				}
 			}
 			if !found {
-				fmt.Printf("Failed to locate! %v\n", searchName)
+				writeToConsole("Failed to locate! %v\n", searchName)
 				panic("")
 			}
 		}
 
 		if isDir {
-			compareDir(allNames, checkHash)
-		} else if checkHash {
-			// Compare file hashes
-			hashes := make([][]byte, len(allNames))
-			speeds := make([]float64, len(allNames))
+			compareDir(allNames, progressChunk, checkHash)
+		} else {
+			if checkHash {
+				// Compare file hashes
+				hashes := make([][]byte, len(allNames))
+				speeds := make([]float64, len(allNames))
 
-			var wg sync.WaitGroup
-			wg.Add(len(allNames))
-			for idx, name := range allNames {
-				go func(idx int, name string) {
-					hashes[idx], speeds[idx] = hashFile(name)
-					wg.Done()
-				}(idx, name)
-			}
-			wg.Wait()
-
-			hash := hashes[0]
-			avgSpeed := speeds[0]
-			for j := 1; j < len(hashes); j++ {
-				if !bytes.Equal(hash, hashes[j]) {
-					fmt.Printf("Hash wrong for file: %v - Expected %x - Got %x\n", allNames[j], hash, hashes[j])
-					panic("")
+				var wg sync.WaitGroup
+				wg.Add(len(allNames))
+				for idx, name := range allNames {
+					go func(idx int, name string) {
+						hashes[idx], speeds[idx] = hashFile(name)
+						wg.Done()
+					}(idx, name)
 				}
-				avgSpeed += speeds[j]
-			}
-			avgSpeed /= float64(len(speeds))
+				wg.Wait()
 
-			fmt.Printf("OK %.4f MB/s %x %v\n", avgSpeed, hash, allNames[0])
+				hash := hashes[0]
+				avgSpeed := speeds[0]
+				for j := 1; j < len(hashes); j++ {
+					if !bytes.Equal(hash, hashes[j]) {
+						writeToConsole("Hash wrong for file: %v - Expected %x - Got %x\n", allNames[j], hash, hashes[j])
+						panic("")
+					}
+					avgSpeed += speeds[j]
+				}
+				avgSpeed /= float64(len(speeds))
+
+				//writeToConsole("OK %.4f MB/s %x %v\n", avgSpeed, hash, allNames[0])
+			}
+			stats.lock.Lock()
+			stats.progress += progressChunk
+			stats.lock.Unlock()
 		}
 	}
+
+	stats.lock.Lock()
+	stats.currentPath = ""
+	stats.progress += progressExtra
+	stats.lock.Unlock()
 }
 
 // Returns hash, MB/s
@@ -186,7 +222,7 @@ func hashFile(name string) ([]byte, float64) {
 
 	f, err := os.Open(name)
 	if err != nil {
-		fmt.Printf("Failed to open file: %v - %v\n", name, err)
+		writeToConsole("Failed to open file: %v - %v\n", name, err)
 		panic("")
 	}
 	defer f.Close()
@@ -198,7 +234,7 @@ func hashFile(name string) ([]byte, float64) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			fmt.Printf("Failed reading file: %v - %v\n", name, err)
+			writeToConsole("Failed reading file: %v - %v\n", name, err)
 			panic("")
 		}
 		h.Write(buff[:n])
@@ -210,7 +246,7 @@ func hashFile(name string) ([]byte, float64) {
 	dur := t2.Sub(t1)
 	MBps := (float64(totalBytes) / 1000 / 1000) / dur.Seconds()
 
-	///fmt.Printf("Hashed %v in %v - %v MB/s\n", name, dur, MBps)
+	///writeToConsole("Hashed %v in %v - %v MB/s\n", name, dur, MBps)
 
 	return result, MBps
 }
