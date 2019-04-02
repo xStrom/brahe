@@ -2,7 +2,7 @@
 
 This is a really simple command-line app that I wrote to compare the contents of multiple supposedly equal directories. I have successfully used it to compare whole disks containing 100k+ files.
 
-You define a source directory (the source of truth) and then any number of target directories. It will then make sure the directory/file hierarchy matches and file contents match based on SHA-1. Right now it works in haystack mode, which means it only checks if the target directories contain everything that the source contains. The target directories can also contain any number of other files and the program won't care. SHA-1 was chosen for speed, but be aware that it's not cryptographically secure, so something stronger should be used if you're checking against more than standard storage failure.
+You define a source directory (the source of truth) and then any number of target directories. It will then make sure the directory/file hierarchy matches and file contents match based on [BLAKE2b](https://blake2.net/), which was chosen for its speed while still being cryptographically secure. Right now it works in haystack mode, which means it only checks if the target directories contain everything that the source contains. The target directories can also contain any number of other files and the program won't care.
 
 # Usage
 

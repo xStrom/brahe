@@ -17,7 +17,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha1"
 	"flag"
 	"fmt"
 	"io"
@@ -27,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 var ignoreNames = map[string]bool{}
@@ -223,7 +224,11 @@ func hashFile(name string) ([]byte, float64) {
 	t1 := time.Now()
 	totalBytes := 0
 
-	h := sha1.New()
+	h, err := blake2b.New256(nil)
+	if err != nil {
+		writeToConsole("Failed to create blake2b hash: %v", err)
+		panic("")
+	}
 
 	f, err := os.Open(name)
 	if err != nil {
