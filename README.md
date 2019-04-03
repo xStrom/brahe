@@ -8,11 +8,12 @@ You define a source directory (the source of truth) and then any number of targe
 
 ```
 brahe [options] [source] [target1] .. [targetN]
-
+  -find-gaps string
+        Value of 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG. Value of '/0:1-13/.txt' seeks 1.txt .. 13.txt.
   -no-data
-        Don't compare the file contents
+        Don't compare the file contents.
   -system-names
-        Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db
+        Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db.
 ```
 
 # Project status

@@ -52,17 +52,51 @@ func askBool(question string) bool {
 	return false
 }
 
+type GapOpts struct {
+	prefix string
+	suffix string
+	width  int
+	begin  int
+	end    int
+}
+
+func (gopt *GapOpts) GetFormat() string {
+	return fmt.Sprintf("%s%%0%dd%s", gopt.prefix, gopt.width, gopt.suffix)
+}
+
 func main() {
 	var noData, checkSysNames bool
-	flag.BoolVar(&noData, "no-data", false, "Don't compare the file contents")
-	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db")
+	var gapPattern string
+	flag.StringVar(&gapPattern, "find-gaps", "", "Value of 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG. Value of '/0:1-13/.txt' seeks 1.txt .. 13.txt.")
+	flag.BoolVar(&noData, "no-data", false, "Don't compare the file contents.")
+	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db.")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [source] [target1] .. [targetN]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	var gapOpts *GapOpts
+	if len(gapPattern) > 0 {
+		pieces := strings.Split(gapPattern, "/")
+		if len(pieces) != 3 {
+			fmt.Printf("Invalid gap pattern! Expected two forward slashes.\n")
+			return
+		}
+		gapOpts = &GapOpts{prefix: pieces[0], suffix: pieces[2]}
+		n, err := fmt.Sscanf(pieces[1], "%d:%d-%d", &gapOpts.width, &gapOpts.begin, &gapOpts.end)
+		if err != nil || n != 3 {
+			fmt.Printf("Invalid gap range? %v\n", err)
+			panic("")
+		}
+	}
+
 	args := flag.Args()
-	if len(args) < 2 {
+	minArgs := 2
+	if gapOpts != nil {
+		minArgs = 1
+	}
+	if len(args) < minArgs {
 		flag.Usage()
 		return
 	}
@@ -92,17 +126,21 @@ func main() {
 	shutdown.AddWorkers(1)
 	go statsGalore()
 
-	if !checkSysNames {
-		for _, entry := range entries {
-			ignoreSpecificDirs[filepath.Join(entry, "$RECYCLE.BIN")] = true
-			ignoreSpecificDirs[filepath.Join(entry, "$Recycle.Bin")] = true
-			ignoreSpecificDirs[filepath.Join(entry, "System Volume Information")] = true
-			ignoreSpecificDirs[filepath.Join(entry, "found.000")] = true
+	if gapOpts != nil {
+		findGaps(entries, 100.0, gapOpts)
+	} else {
+		if !checkSysNames {
+			for _, entry := range entries {
+				ignoreSpecificDirs[filepath.Join(entry, "$RECYCLE.BIN")] = true
+				ignoreSpecificDirs[filepath.Join(entry, "$Recycle.Bin")] = true
+				ignoreSpecificDirs[filepath.Join(entry, "System Volume Information")] = true
+				ignoreSpecificDirs[filepath.Join(entry, "found.000")] = true
+			}
+			ignoreFiles["Thumbs.db"] = true
 		}
-		ignoreFiles["Thumbs.db"] = true
-	}
 
-	compareDir(entries, 100.0, !noData)
+		compareDir(entries, 100.0, !noData)
+	}
 
 	displayInfo.Hide()
 	shutdown.Start()
@@ -113,7 +151,7 @@ func main() {
 
 // TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
 
-func compareDir(dirNames []string, progressValue float64, checkHash bool) {
+func getFileLists(dirNames []string) [][]os.FileInfo {
 	// Get the file list for this directory
 	allFileInfos := make([][]os.FileInfo, len(dirNames))
 	for idx, dirName := range dirNames {
@@ -124,6 +162,66 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 		}
 		allFileInfos[idx] = append(allFileInfos[idx], files...)
 	}
+	return allFileInfos
+}
+
+func findGaps(dirNames []string, progressValue float64, gapOpts *GapOpts) {
+	gapFormat := gapOpts.GetFormat()
+
+	// Get the file list for this directory
+	allFileInfos := getFileLists(dirNames)
+
+	fiCount := 0
+	for i := range allFileInfos {
+		fiCount += len(allFileInfos[i])
+	}
+
+	var progressChunk float64
+	if fiCount > 0 {
+		progressChunk = progressValue / float64(fiCount)
+	}
+	progressExtra := progressValue - progressChunk*float64(fiCount)
+
+	for i := range allFileInfos {
+		foundFiles := make(map[string]bool, gapOpts.end-gapOpts.begin)
+		for seq := gapOpts.begin; seq <= gapOpts.end; seq++ {
+			foundFiles[fmt.Sprintf(gapFormat, seq)] = false
+		}
+
+		for j := range allFileInfos[i] {
+			name := allFileInfos[i][j].Name()
+			fullName := filepath.Join(dirNames[i], name)
+			isDir := allFileInfos[i][j].IsDir()
+
+			if !isDir {
+				if _, ok := foundFiles[name]; ok {
+					foundFiles[name] = true
+				}
+			}
+
+			stats.lock.Lock()
+			stats.currentPath = fullName
+			stats.progress += progressChunk
+			stats.lock.Unlock()
+		}
+
+		for seq := gapOpts.begin; seq <= gapOpts.end; seq++ {
+			name := fmt.Sprintf(gapFormat, seq)
+			if !foundFiles[name] {
+				writeToConsole("MISSING %s", name)
+			}
+		}
+	}
+
+	stats.lock.Lock()
+	stats.currentPath = ""
+	stats.progress += progressExtra
+	stats.lock.Unlock()
+}
+
+func compareDir(dirNames []string, progressValue float64, checkHash bool) {
+	// Get the file list for this directory
+	allFileInfos := getFileLists(dirNames)
 
 	// Make sure they match
 	fiCount := len(allFileInfos[0])
