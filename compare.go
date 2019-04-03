@@ -30,7 +30,8 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
-var ignoreNames = map[string]bool{}
+var ignoreSpecificDirs = map[string]bool{}
+var ignoreFiles = map[string]bool{}
 
 // NOTE: Also returns false in case of EOF (e.g. Ctrl+C)
 func askBool(question string) bool {
@@ -54,7 +55,7 @@ func askBool(question string) bool {
 func main() {
 	var noData, checkSysNames bool
 	flag.BoolVar(&noData, "no-data", false, "Don't compare the file contents")
-	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN and System Volume Information")
+	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [source] [target1] .. [targetN]\n", os.Args[0])
 		flag.PrintDefaults()
@@ -93,11 +94,12 @@ func main() {
 
 	if !checkSysNames {
 		for _, entry := range entries {
-			ignoreNames[filepath.Join(entry, "$RECYCLE.BIN")] = true
-			ignoreNames[filepath.Join(entry, "$Recycle.Bin")] = true
-			ignoreNames[filepath.Join(entry, "System Volume Information")] = true
-			ignoreNames[filepath.Join(entry, "found.000")] = true
+			ignoreSpecificDirs[filepath.Join(entry, "$RECYCLE.BIN")] = true
+			ignoreSpecificDirs[filepath.Join(entry, "$Recycle.Bin")] = true
+			ignoreSpecificDirs[filepath.Join(entry, "System Volume Information")] = true
+			ignoreSpecificDirs[filepath.Join(entry, "found.000")] = true
 		}
+		ignoreFiles["Thumbs.db"] = true
 	}
 
 	compareDir(entries, 100.0, !noData)
@@ -136,7 +138,9 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 	for i := 0; i < fiCount; i++ {
 		name := allFileInfos[0][i].Name()
 		fullName := filepath.Join(dirNames[0], name)
-		if ignoreNames[fullName] {
+		isDir := allFileInfos[0][i].IsDir()
+
+		if (isDir && ignoreSpecificDirs[fullName]) || (!isDir && ignoreFiles[name]) {
 			stats.lock.Lock()
 			stats.progress += progressChunk
 			stats.lock.Unlock()
@@ -147,7 +151,6 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 		stats.currentPath = fullName
 		stats.lock.Unlock()
 
-		isDir := allFileInfos[0][i].IsDir()
 		allNames := make([]string, 0, len(allFileInfos))
 		allNames = append(allNames, fullName)
 		for j := 1; j < len(allFileInfos); j++ {

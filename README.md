@@ -12,7 +12,7 @@ compare [options] [source] [target1] .. [targetN]
   -no-data
         Don't compare the file contents
   -system-names
-        Also check system names like $RECYCLE.BIN and System Volume Information
+        Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db
 ```
 
 # Project status
