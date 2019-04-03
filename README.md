@@ -1,4 +1,4 @@
-# Compare
+# Brahe
 
 This is a really simple command-line app that I wrote to compare the contents of multiple supposedly equal directories. I have successfully used it to compare whole disks containing 100k+ files.
 
@@ -7,7 +7,7 @@ You define a source directory (the source of truth) and then any number of targe
 # Usage
 
 ```
-compare [options] [source] [target1] .. [targetN]
+brahe [options] [source] [target1] .. [targetN]
 
   -no-data
         Don't compare the file contents
