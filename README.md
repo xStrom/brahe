@@ -13,6 +13,10 @@ brahe [options] [source] [target1] .. [targetN]
         Builds a hash database of all entries in [source] to [target1]
   -check-db
         Checks all files in [target1] .. [targetN] against the hash database in [source]
+  -depth int
+        Specify how deep into the directory hierarchy to look into.
+        Use 0 to check only immediate files/directories with no traversing.
+        Use -1 for no limit. (default -1)
   -find-gaps pattern
         The pattern 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG.
         Pattern '/0:1-13/.txt' seeks 1.txt .. 13.txt.

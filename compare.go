@@ -179,7 +179,7 @@ func hasDBEntry(parentDir string, hash []byte) bool {
 	return true
 }
 
-func useDB(cfg *Config, progressValue float64, dirName string) {
+func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 	fileInfos := getFileList(dirName)
 	fiCount := len(fileInfos)
 
@@ -202,21 +202,23 @@ func useDB(cfg *Config, progressValue float64, dirName string) {
 		stats.lock.Unlock()
 
 		if isDir {
-			useDB(cfg, progressChunk, fullName)
-			continue // Progress was already incremented by useDB
-		}
+			if depth != 0 {
+				useDB(cfg, progressChunk, fullName, depth-1)
+				continue // Progress was already incremented
+			}
+		} else {
+			// Compare file hashes
+			hash, _ := hashFile(fullName)
+			//writeToConsole("OK %.4f MB/s %x %v\n", speed, hash, fullName)
 
-		// Compare file hashes
-		hash, _ := hashFile(fullName)
-		//writeToConsole("OK %.4f MB/s %x %v\n", speed, hash, fullName)
-
-		if cfg.buildDB {
-			// Write out the DB entry
-			ensureDBEntry(cfg.entries[1], hash, fullName)
-		} else if cfg.checkDB {
-			// Check if the DB entry exists
-			if !hasDBEntry(cfg.entries[0], hash) {
-				reportMismatch("MISSING %v", fullName)
+			if cfg.buildDB {
+				// Write out the DB entry
+				ensureDBEntry(cfg.entries[1], hash, fullName)
+			} else if cfg.checkDB {
+				// Check if the DB entry exists
+				if !hasDBEntry(cfg.entries[0], hash) {
+					reportMismatch("MISSING %v", fullName)
+				}
 			}
 		}
 
@@ -232,7 +234,7 @@ func useDB(cfg *Config, progressValue float64, dirName string) {
 	stats.lock.Unlock()
 }
 
-func compareDir(cfg *Config, progressValue float64, dirNames []string) {
+func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int) {
 	// Get the file list for this directory
 	allFileInfos := getFileLists(dirNames)
 
@@ -286,8 +288,10 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string) {
 
 		if len(allNames) > 1 {
 			if isDir {
-				compareDir(cfg, progressChunk, allNames)
-				continue // Progress was already incremented by compareDir
+				if depth != 0 {
+					compareDir(cfg, progressChunk, allNames, depth-1)
+					continue // Progress was already incremented by compareDir
+				}
 			} else if !cfg.noData {
 				// Compare file hashes
 				hashes := make([][]byte, len(allNames))

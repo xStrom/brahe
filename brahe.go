@@ -61,6 +61,7 @@ func (gov *gapOptsValue) Set(pattern string) error {
 }
 
 type Config struct {
+	depth              int
 	entries            []string
 	noData             bool
 	checkSysNames      bool
@@ -80,6 +81,12 @@ func getConfig(arguments []string) (*Config, error) {
 		&gapOptsValue{&cfg.gapOpts},
 		"find-gaps",
 		"The `pattern` 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG.\nPattern '/0:1-13/.txt' seeks 1.txt .. 13.txt.",
+	)
+	f.IntVar(
+		&cfg.depth,
+		"depth",
+		-1,
+		"Specify how deep into the directory hierarchy to look into.\nUse 0 to check only immediate files/directories with no traversing.\nUse -1 for no limit.",
 	)
 	f.BoolVar(
 		&cfg.noData,
@@ -197,18 +204,18 @@ func main() {
 		findGaps(cfg, 100.0, cfg.entries)
 	} else if cfg.buildDB {
 		initDB(cfg.entries[1])
-		useDB(cfg, 100.0, cfg.entries[0])
+		useDB(cfg, 100.0, cfg.entries[0], cfg.depth)
 	} else if cfg.checkDB {
 		verifyDB(cfg.entries[0])
 		progressChunk, progressExtra := splitProgressValue(100.0, len(cfg.entries)-1)
 		for i := 1; i < len(cfg.entries); i++ {
-			useDB(cfg, progressChunk, cfg.entries[i])
+			useDB(cfg, progressChunk, cfg.entries[i], cfg.depth)
 		}
 		stats.lock.Lock()
 		stats.progress += progressExtra
 		stats.lock.Unlock()
 	} else {
-		compareDir(cfg, 100.0, cfg.entries)
+		compareDir(cfg, 100.0, cfg.entries, cfg.depth)
 	}
 
 	displayInfo.Hide()
