@@ -67,6 +67,7 @@ type Config struct {
 	ignoreSpecificDirs map[string]bool
 	ignoreFiles        map[string]bool
 	gapOpts            *GapOpts
+	buildDB            bool
 }
 
 const AppName = "brahe"
@@ -77,7 +78,7 @@ func getConfig(arguments []string) (*Config, error) {
 	f.Var(
 		&gapOptsValue{&cfg.gapOpts},
 		"find-gaps",
-		"Value of 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG.\nValue of '/0:1-13/.txt' seeks 1.txt .. 13.txt.",
+		"The `pattern` 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG.\nPattern '/0:1-13/.txt' seeks 1.txt .. 13.txt.",
 	)
 	f.BoolVar(
 		&cfg.noData,
@@ -91,6 +92,12 @@ func getConfig(arguments []string) (*Config, error) {
 		false,
 		"Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db.",
 	)
+	f.BoolVar(
+		&cfg.buildDB,
+		"build-db",
+		false,
+		"Builds a hash database of all entries in [source] to [target1]",
+	)
 	f.Usage = func() {
 		fmt.Fprintf(f.Output(), "Usage:\n\n%s [options] [source] [target1] .. [targetN]\n\n", AppName)
 		f.PrintDefaults()
@@ -103,6 +110,9 @@ func getConfig(arguments []string) (*Config, error) {
 		fmt.Fprintln(f.Output(), err)
 		f.Usage()
 		return err
+	}
+	if cfg.noData && cfg.buildDB {
+		return nil, failf("Can't build a hash database without looking at file contents! Check your options.")
 	}
 	minArgs := 2
 	if cfg.gapOpts != nil {
@@ -178,6 +188,9 @@ func main() {
 
 	if cfg.gapOpts != nil {
 		findGaps(cfg, 100.0, cfg.entries)
+	} else if cfg.buildDB {
+		initDB(cfg.entries[1])
+		buildDB(cfg, 100.0, cfg.entries[0])
 	} else {
 		compareDir(cfg, 100.0, cfg.entries)
 	}

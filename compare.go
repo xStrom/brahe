@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,16 +32,20 @@ import (
 
 // TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
 
+func getFileList(dirName string) []os.FileInfo {
+	files, err := ioutil.ReadDir(dirName)
+	if err != nil {
+		writeToConsole("ReadDir failed: %v", err)
+		panic("")
+	}
+	return files
+}
+
 func getFileLists(dirNames []string) [][]os.FileInfo {
 	// Get the file list for this directory
 	allFileInfos := make([][]os.FileInfo, len(dirNames))
 	for idx, dirName := range dirNames {
-		files, err := ioutil.ReadDir(dirName)
-		if err != nil {
-			writeToConsole("ReadDir failed: %v", err)
-			panic("")
-		}
-		allFileInfos[idx] = append(allFileInfos[idx], files...)
+		allFileInfos[idx] = getFileList(dirName)
 	}
 	return allFileInfos
 }
@@ -91,6 +96,97 @@ func findGaps(cfg *Config, progressValue float64, dirNames []string) {
 				writeToConsole("MISSING %s", name)
 			}
 		}
+	}
+
+	stats.lock.Lock()
+	stats.currentPath = ""
+	stats.progress += progressExtra
+	stats.lock.Unlock()
+}
+
+const dbDirectory = "BraheDB"
+
+func initDB(parentDir string) {
+	dbDir := filepath.Join(parentDir, dbDirectory)
+	if err := os.Mkdir(dbDir, 0666); err != nil && !os.IsExist(err) {
+		writeToConsole("Failed to create directory %v: %v", dbDir, err)
+		panic("")
+	}
+}
+
+func ensureDBEntry(parentDir string, hash []byte, entry string) {
+	hashHex := fmt.Sprintf("%x", hash)
+	hashFileDir := filepath.Join(parentDir, dbDirectory, hashHex[:2])
+	if err := os.Mkdir(hashFileDir, 0666); err != nil && !os.IsExist(err) {
+		writeToConsole("Failed to create directory %v: %v", hashFileDir, err)
+		panic("")
+	}
+	hashFile := filepath.Join(hashFileDir, hashHex[2:])
+	f, err := os.OpenFile(hashFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		writeToConsole("Failed to open file %v: %v", hashFile, err)
+		panic("")
+	}
+	defer f.Close()
+	b, err := ioutil.ReadAll(f)
+	if err != nil {
+		writeToConsole("Failed to read file %v: %v", hashFile, err)
+		panic("")
+	}
+	lines := strings.Split(string(b), "\n")
+	for _, line := range lines {
+		if line == entry {
+			return
+		}
+	}
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		writeToConsole("Failed to add entry to file %v: %v", hashFile, err)
+		panic("")
+	}
+}
+
+func buildDB(cfg *Config, progressValue float64, dirName string) {
+	fileInfos := getFileList(dirName)
+	fiCount := len(fileInfos)
+
+	var progressChunk float64
+	if fiCount > 0 {
+		progressChunk = progressValue / float64(fiCount)
+	}
+	progressExtra := progressValue - progressChunk*float64(fiCount)
+
+	for i := 0; i < fiCount; i++ {
+		name := fileInfos[i].Name()
+		fullName := filepath.Join(dirName, name)
+		isDir := fileInfos[i].IsDir()
+
+		if (isDir && cfg.ignoreSpecificDirs[fullName]) || (!isDir && cfg.ignoreFiles[name]) {
+			stats.lock.Lock()
+			stats.progress += progressChunk
+			stats.lock.Unlock()
+			continue
+		}
+
+		stats.lock.Lock()
+		stats.currentPath = fullName
+		stats.lock.Unlock()
+
+		if isDir {
+			buildDB(cfg, progressChunk, fullName)
+			continue // Progress was already incremented by buildDB
+		}
+
+		// Compare file hashes
+		hash, _ := hashFile(fullName)
+		//writeToConsole("OK %.4f MB/s %x %v\n", speed, hash, fullName)
+
+		// Write out the DB entry
+		ensureDBEntry(cfg.entries[1], hash, fullName)
+
+		// Increment the progress
+		stats.lock.Lock()
+		stats.progress += progressChunk
+		stats.lock.Unlock()
 	}
 
 	stats.lock.Lock()
