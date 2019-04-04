@@ -32,6 +32,14 @@ import (
 
 // TODO: On Windows detect MAX_PATH violations -- even though we could bypass them with UNC, it's explorer nightmare
 
+func splitProgressValue(value float64, parts int) (chunk float64, extra float64) {
+	if parts > 0 {
+		chunk = value / float64(parts)
+	}
+	extra = value - chunk*float64(parts)
+	return
+}
+
 func getFileList(dirName string) []os.FileInfo {
 	files, err := ioutil.ReadDir(dirName)
 	if err != nil {
@@ -61,11 +69,7 @@ func findGaps(cfg *Config, progressValue float64, dirNames []string) {
 		fiCount += len(allFileInfos[i])
 	}
 
-	var progressChunk float64
-	if fiCount > 0 {
-		progressChunk = progressValue / float64(fiCount)
-	}
-	progressExtra := progressValue - progressChunk*float64(fiCount)
+	progressChunk, progressExtra := splitProgressValue(progressValue, fiCount)
 
 	for i := range allFileInfos {
 		foundFiles := make(map[string]bool, cfg.gapOpts.end-cfg.gapOpts.begin)
@@ -114,6 +118,22 @@ func initDB(parentDir string) {
 	}
 }
 
+func verifyDB(parentDir string) {
+	dbDir := filepath.Join(parentDir, dbDirectory)
+	if fi, err := os.Stat(dbDir); err != nil {
+		if os.IsNotExist(err) {
+			writeToConsole("You need to build a database! No database exists in %v", parentDir)
+			panic("")
+		} else {
+			writeToConsole("Failed to check database existance: %v", err)
+			panic("")
+		}
+	} else if !fi.IsDir() {
+		writeToConsole("The database needs to be inside a directory! %v is not a directory.", dbDir)
+		panic("")
+	}
+}
+
 func ensureDBEntry(parentDir string, hash []byte, entry string) {
 	hashHex := fmt.Sprintf("%x", hash)
 	hashFileDir := filepath.Join(parentDir, dbDirectory, hashHex[:2])
@@ -145,15 +165,25 @@ func ensureDBEntry(parentDir string, hash []byte, entry string) {
 	}
 }
 
-func buildDB(cfg *Config, progressValue float64, dirName string) {
+func hasDBEntry(parentDir string, hash []byte) bool {
+	hashHex := fmt.Sprintf("%x", hash)
+	hashFile := filepath.Join(parentDir, dbDirectory, hashHex[:2], hashHex[2:])
+	_, err := os.Stat(hashFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		writeToConsole("Failed to get file info %v: %v", hashFile, err)
+		panic("")
+	}
+	return true
+}
+
+func useDB(cfg *Config, progressValue float64, dirName string) {
 	fileInfos := getFileList(dirName)
 	fiCount := len(fileInfos)
 
-	var progressChunk float64
-	if fiCount > 0 {
-		progressChunk = progressValue / float64(fiCount)
-	}
-	progressExtra := progressValue - progressChunk*float64(fiCount)
+	progressChunk, progressExtra := splitProgressValue(progressValue, fiCount)
 
 	for i := 0; i < fiCount; i++ {
 		name := fileInfos[i].Name()
@@ -172,16 +202,23 @@ func buildDB(cfg *Config, progressValue float64, dirName string) {
 		stats.lock.Unlock()
 
 		if isDir {
-			buildDB(cfg, progressChunk, fullName)
-			continue // Progress was already incremented by buildDB
+			useDB(cfg, progressChunk, fullName)
+			continue // Progress was already incremented by useDB
 		}
 
 		// Compare file hashes
 		hash, _ := hashFile(fullName)
 		//writeToConsole("OK %.4f MB/s %x %v\n", speed, hash, fullName)
 
-		// Write out the DB entry
-		ensureDBEntry(cfg.entries[1], hash, fullName)
+		if cfg.buildDB {
+			// Write out the DB entry
+			ensureDBEntry(cfg.entries[1], hash, fullName)
+		} else if cfg.checkDB {
+			// Check if the DB entry exists
+			if !hasDBEntry(cfg.entries[0], hash) {
+				reportMismatch("MISSING %v", fullName)
+			}
+		}
 
 		// Increment the progress
 		stats.lock.Lock()
@@ -202,12 +239,7 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string) {
 	// Make sure they match
 	fiCount := len(allFileInfos[0])
 
-	var progressChunk float64
-	if fiCount > 0 {
-		progressChunk = progressValue / float64(fiCount)
-	}
-	progressExtra := progressValue - progressChunk*float64(fiCount)
-	// TODO: Divide it even more by all the entries?
+	progressChunk, progressExtra := splitProgressValue(progressValue, fiCount)
 
 	for i := 0; i < fiCount; i++ {
 		name := allFileInfos[0][i].Name()

@@ -11,6 +11,8 @@ brahe [options] [source] [target1] .. [targetN]
 
   -build-db
         Builds a hash database of all entries in [source] to [target1]
+  -check-db
+        Checks all files in [target1] .. [targetN] against the hash database in [source]
   -find-gaps pattern
         The pattern 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG.
         Pattern '/0:1-13/.txt' seeks 1.txt .. 13.txt.

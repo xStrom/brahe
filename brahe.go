@@ -68,6 +68,7 @@ type Config struct {
 	ignoreFiles        map[string]bool
 	gapOpts            *GapOpts
 	buildDB            bool
+	checkDB            bool
 }
 
 const AppName = "brahe"
@@ -98,6 +99,12 @@ func getConfig(arguments []string) (*Config, error) {
 		false,
 		"Builds a hash database of all entries in [source] to [target1]",
 	)
+	f.BoolVar(
+		&cfg.checkDB,
+		"check-db",
+		false,
+		"Checks all files in [target1] .. [targetN] against the hash database in [source]",
+	)
 	f.Usage = func() {
 		fmt.Fprintf(f.Output(), "Usage:\n\n%s [options] [source] [target1] .. [targetN]\n\n", AppName)
 		f.PrintDefaults()
@@ -111,8 +118,8 @@ func getConfig(arguments []string) (*Config, error) {
 		f.Usage()
 		return err
 	}
-	if cfg.noData && cfg.buildDB {
-		return nil, failf("Can't build a hash database without looking at file contents! Check your options.")
+	if cfg.noData && (cfg.buildDB || cfg.checkDB) {
+		return nil, failf("Can't deal with the hash database without looking at file contents! Check your options.")
 	}
 	minArgs := 2
 	if cfg.gapOpts != nil {
@@ -190,7 +197,16 @@ func main() {
 		findGaps(cfg, 100.0, cfg.entries)
 	} else if cfg.buildDB {
 		initDB(cfg.entries[1])
-		buildDB(cfg, 100.0, cfg.entries[0])
+		useDB(cfg, 100.0, cfg.entries[0])
+	} else if cfg.checkDB {
+		verifyDB(cfg.entries[0])
+		progressChunk, progressExtra := splitProgressValue(100.0, len(cfg.entries)-1)
+		for i := 1; i < len(cfg.entries); i++ {
+			useDB(cfg, progressChunk, cfg.entries[i])
+		}
+		stats.lock.Lock()
+		stats.progress += progressExtra
+		stats.lock.Unlock()
 	} else {
 		compareDir(cfg, 100.0, cfg.entries)
 	}
