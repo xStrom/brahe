@@ -15,137 +15,17 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/blake2b"
 )
-
-var ignoreSpecificDirs = map[string]bool{}
-var ignoreFiles = map[string]bool{}
-
-// NOTE: Also returns false in case of EOF (e.g. Ctrl+C)
-func askBool(question string) bool {
-	fmt.Printf("%v (Y/N) - ", question)
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		answer := strings.ToLower(scanner.Text())
-		if answer == "n" {
-			return false
-		} else if answer == "y" {
-			return true
-		}
-		fmt.Printf("%v (Y/N) - ", question)
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("\nScan failed: %v\n", err)
-	}
-	return false
-}
-
-type GapOpts struct {
-	prefix string
-	suffix string
-	width  int
-	begin  int
-	end    int
-}
-
-func (gopt *GapOpts) GetFormat() string {
-	return fmt.Sprintf("%s%%0%dd%s", gopt.prefix, gopt.width, gopt.suffix)
-}
-
-func main() {
-	var noData, checkSysNames bool
-	var gapPattern string
-	flag.StringVar(&gapPattern, "find-gaps", "", "Value of 'IMG_/4:14-155/.JPG' searches for gaps in sequence of IMG_0014.JPG .. IMG_0155.JPG. Value of '/0:1-13/.txt' seeks 1.txt .. 13.txt.")
-	flag.BoolVar(&noData, "no-data", false, "Don't compare the file contents.")
-	flag.BoolVar(&checkSysNames, "system-names", false, "Also check system names like $RECYCLE.BIN;System Volume Information;found.000;Thumbs.db.")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [source] [target1] .. [targetN]\n", os.Args[0])
-		flag.PrintDefaults()
-	}
-	flag.Parse()
-
-	var gapOpts *GapOpts
-	if len(gapPattern) > 0 {
-		pieces := strings.Split(gapPattern, "/")
-		if len(pieces) != 3 {
-			fmt.Printf("Invalid gap pattern! Expected two forward slashes.\n")
-			return
-		}
-		gapOpts = &GapOpts{prefix: pieces[0], suffix: pieces[2]}
-		n, err := fmt.Sscanf(pieces[1], "%d:%d-%d", &gapOpts.width, &gapOpts.begin, &gapOpts.end)
-		if err != nil || n != 3 {
-			fmt.Printf("Invalid gap range? %v\n", err)
-			panic("")
-		}
-	}
-
-	args := flag.Args()
-	minArgs := 2
-	if gapOpts != nil {
-		minArgs = 1
-	}
-	if len(args) < minArgs {
-		flag.Usage()
-		return
-	}
-	var entries []string
-	for i := range args {
-		entry, err := filepath.Abs(args[i])
-		if err != nil {
-			fmt.Printf("Invalid path? %v\n", args[i])
-			panic("")
-		}
-		entries = append(entries, entry)
-	}
-	for i := range entries {
-		header := "   Source"
-		if i > 0 {
-			header = fmt.Sprintf("Target #%d", i)
-		}
-		fmt.Printf("%v: %v\n", header, entries[i])
-	}
-	if !askBool("Start comparing?") {
-		return
-	}
-
-	// NOTE: From here on out, we no longer directly use fmt.Printf
-	writeToConsole("Starting work ..")
-	displayInfo.Show()
-	shutdown.AddWorkers(1)
-	go statsGalore()
-
-	if gapOpts != nil {
-		findGaps(entries, 100.0, gapOpts)
-	} else {
-		if !checkSysNames {
-			for _, entry := range entries {
-				ignoreSpecificDirs[filepath.Join(entry, "$RECYCLE.BIN")] = true
-				ignoreSpecificDirs[filepath.Join(entry, "$Recycle.Bin")] = true
-				ignoreSpecificDirs[filepath.Join(entry, "System Volume Information")] = true
-				ignoreSpecificDirs[filepath.Join(entry, "found.000")] = true
-			}
-			ignoreFiles["Thumbs.db"] = true
-		}
-
-		compareDir(entries, 100.0, !noData)
-	}
-
-	displayInfo.Hide()
-	shutdown.Start()
-	shutdown.Wait()
-}
 
 // TODO: Add back strict non-haystack check (for excessive files in target directories that don't exist in source)
 
@@ -165,8 +45,8 @@ func getFileLists(dirNames []string) [][]os.FileInfo {
 	return allFileInfos
 }
 
-func findGaps(dirNames []string, progressValue float64, gapOpts *GapOpts) {
-	gapFormat := gapOpts.GetFormat()
+func findGaps(cfg *Config, progressValue float64, dirNames []string) {
+	gapFormat := cfg.gapOpts.GetFormat()
 
 	// Get the file list for this directory
 	allFileInfos := getFileLists(dirNames)
@@ -183,8 +63,8 @@ func findGaps(dirNames []string, progressValue float64, gapOpts *GapOpts) {
 	progressExtra := progressValue - progressChunk*float64(fiCount)
 
 	for i := range allFileInfos {
-		foundFiles := make(map[string]bool, gapOpts.end-gapOpts.begin)
-		for seq := gapOpts.begin; seq <= gapOpts.end; seq++ {
+		foundFiles := make(map[string]bool, cfg.gapOpts.end-cfg.gapOpts.begin)
+		for seq := cfg.gapOpts.begin; seq <= cfg.gapOpts.end; seq++ {
 			foundFiles[fmt.Sprintf(gapFormat, seq)] = false
 		}
 
@@ -205,7 +85,7 @@ func findGaps(dirNames []string, progressValue float64, gapOpts *GapOpts) {
 			stats.lock.Unlock()
 		}
 
-		for seq := gapOpts.begin; seq <= gapOpts.end; seq++ {
+		for seq := cfg.gapOpts.begin; seq <= cfg.gapOpts.end; seq++ {
 			name := fmt.Sprintf(gapFormat, seq)
 			if !foundFiles[name] {
 				writeToConsole("MISSING %s", name)
@@ -219,7 +99,7 @@ func findGaps(dirNames []string, progressValue float64, gapOpts *GapOpts) {
 	stats.lock.Unlock()
 }
 
-func compareDir(dirNames []string, progressValue float64, checkHash bool) {
+func compareDir(cfg *Config, progressValue float64, dirNames []string) {
 	// Get the file list for this directory
 	allFileInfos := getFileLists(dirNames)
 
@@ -238,7 +118,7 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 		fullName := filepath.Join(dirNames[0], name)
 		isDir := allFileInfos[0][i].IsDir()
 
-		if (isDir && ignoreSpecificDirs[fullName]) || (!isDir && ignoreFiles[name]) {
+		if (isDir && cfg.ignoreSpecificDirs[fullName]) || (!isDir && cfg.ignoreFiles[name]) {
 			stats.lock.Lock()
 			stats.progress += progressChunk
 			stats.lock.Unlock()
@@ -278,9 +158,9 @@ func compareDir(dirNames []string, progressValue float64, checkHash bool) {
 
 		if len(allNames) > 1 {
 			if isDir {
-				compareDir(allNames, progressChunk, checkHash)
+				compareDir(cfg, progressChunk, allNames)
 				continue // Progress was already incremented by compareDir
-			} else if checkHash {
+			} else if !cfg.noData {
 				// Compare file hashes
 				hashes := make([][]byte, len(allNames))
 				speeds := make([]float64, len(allNames))
