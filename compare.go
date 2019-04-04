@@ -71,8 +71,12 @@ func findGaps(cfg *Config, progressValue float64, dirNames []string) {
 
 	progressChunk, progressExtra := splitProgressValue(progressValue, fiCount)
 
+	stats.lock.Lock()
+	stats.missing = len(dirNames) * (cfg.gapOpts.end - cfg.gapOpts.begin + 1)
+	stats.lock.Unlock()
+
 	for i := range allFileInfos {
-		foundFiles := make(map[string]bool, cfg.gapOpts.end-cfg.gapOpts.begin)
+		foundFiles := make(map[string]bool, cfg.gapOpts.end-cfg.gapOpts.begin+1)
 		for seq := cfg.gapOpts.begin; seq <= cfg.gapOpts.end; seq++ {
 			foundFiles[fmt.Sprintf(gapFormat, seq)] = false
 		}
@@ -91,6 +95,10 @@ func findGaps(cfg *Config, progressValue float64, dirNames []string) {
 			stats.lock.Lock()
 			stats.currentPath = fullName
 			stats.progress += progressChunk
+			if foundFiles[name] {
+				stats.matched++
+				stats.missing--
+			}
 			stats.lock.Unlock()
 		}
 
@@ -193,6 +201,7 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		if (isDir && cfg.ignoreSpecificDirs[fullName]) || (!isDir && cfg.ignoreFiles[name]) {
 			stats.lock.Lock()
 			stats.progress += progressChunk
+			stats.ignored++
 			stats.lock.Unlock()
 			continue
 		}
@@ -201,6 +210,7 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		stats.currentPath = fullName
 		stats.lock.Unlock()
 
+		var deltaMatched, deltaMissing int
 		if isDir {
 			if depth != 0 {
 				useDB(cfg, progressChunk, fullName, depth-1)
@@ -209,15 +219,19 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		} else {
 			// Compare file hashes
 			hash, _ := hashFile(fullName)
-			//writeToConsole("OK %.4f MB/s %x %v\n", speed, hash, fullName)
+			//writeToConsole("OK %.4f MB/s %x %v", speed, hash, fullName)
 
 			if cfg.buildDB {
 				// Write out the DB entry
 				ensureDBEntry(cfg.entries[1], hash, fullName)
+				deltaMatched++
 			} else if cfg.checkDB {
 				// Check if the DB entry exists
 				if !hasDBEntry(cfg.entries[0], hash) {
+					deltaMissing++
 					reportMismatch("MISSING %v", fullName)
+				} else {
+					deltaMatched++
 				}
 			}
 		}
@@ -225,6 +239,8 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		// Increment the progress
 		stats.lock.Lock()
 		stats.progress += progressChunk
+		stats.matched += deltaMatched
+		stats.missing += deltaMissing
 		stats.lock.Unlock()
 	}
 
@@ -251,6 +267,7 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 		if (isDir && cfg.ignoreSpecificDirs[fullName]) || (!isDir && cfg.ignoreFiles[name]) {
 			stats.lock.Lock()
 			stats.progress += progressChunk
+			stats.ignored++
 			stats.lock.Unlock()
 			continue
 		}
@@ -258,6 +275,8 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 		stats.lock.Lock()
 		stats.currentPath = fullName
 		stats.lock.Unlock()
+
+		var deltaMatched, deltaMismatched, deltaMissing int
 
 		allNames := make([]string, 0, len(allFileInfos))
 		allNames = append(allNames, fullName)
@@ -269,9 +288,11 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 				if n == name {
 					if allFileInfos[j][k].IsDir() == isDir {
 						found = true
+						deltaMatched++
 						allNames = append(allNames, searchName)
 					} else {
 						dirMismatch = true
+						deltaMismatched++
 						if isDir {
 							reportMismatch("EXPECTED DIR %v", searchName)
 						} else {
@@ -282,6 +303,7 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 				}
 			}
 			if !found && !dirMismatch {
+				deltaMissing++
 				reportMismatch("MISSING %v", searchName)
 			}
 		}
@@ -290,6 +312,11 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 			if isDir {
 				if depth != 0 {
 					compareDir(cfg, progressChunk, allNames, depth-1)
+					stats.lock.Lock()
+					stats.matched += deltaMatched
+					stats.mismatched += deltaMismatched
+					stats.missing += deltaMissing
+					stats.lock.Unlock()
 					continue // Progress was already incremented by compareDir
 				}
 			} else if !cfg.noData {
@@ -311,18 +338,23 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 				avgSpeed := speeds[0]
 				for j := 1; j < len(hashes); j++ {
 					if !bytes.Equal(hash, hashes[j]) {
+						deltaMatched--
+						deltaMismatched++
 						reportMismatch("WRONG HASH %v", allNames[j])
 					}
 					avgSpeed += speeds[j]
 				}
 				avgSpeed /= float64(len(speeds))
 
-				//writeToConsole("OK %.4f MB/s %x %v\n", avgSpeed, hash, allNames[0])
+				//writeToConsole("OK %.4f MB/s %x %v", avgSpeed, hash, allNames[0])
 			}
 		}
 		// Increment the progress
 		stats.lock.Lock()
 		stats.progress += progressChunk
+		stats.matched += deltaMatched
+		stats.mismatched += deltaMismatched
+		stats.missing += deltaMissing
 		stats.lock.Unlock()
 	}
 
@@ -345,7 +377,7 @@ func hashFile(name string) ([]byte, float64) {
 
 	f, err := os.Open(name)
 	if err != nil {
-		writeToConsole("Failed to open file: %v - %v\n", name, err)
+		writeToConsole("Failed to open file: %v - %v", name, err)
 		panic("")
 	}
 	defer f.Close()
@@ -357,7 +389,7 @@ func hashFile(name string) ([]byte, float64) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			writeToConsole("Failed reading file: %v - %v\n", name, err)
+			writeToConsole("Failed reading file: %v - %v", name, err)
 			panic("")
 		}
 		h.Write(buff[:n])
@@ -369,7 +401,7 @@ func hashFile(name string) ([]byte, float64) {
 	dur := t2.Sub(t1)
 	MBps := (float64(totalBytes) / 1000 / 1000) / dur.Seconds()
 
-	///writeToConsole("Hashed %v in %v - %v MB/s\n", name, dur, MBps)
+	///writeToConsole("Hashed %v in %v - %v MB/s", name, dur, MBps)
 
 	return result, MBps
 }

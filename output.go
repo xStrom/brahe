@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Shutdown struct {
@@ -44,7 +45,7 @@ func (s *Shutdown) Start() {
 
 type DisplayInfo struct {
 	lock sync.RWMutex
-	info string
+	line string
 	show bool
 }
 
@@ -56,6 +57,11 @@ func (di *DisplayInfo) Show() {
 
 func (di *DisplayInfo) Hide() {
 	di.lock.Lock()
+	if di.show {
+		fmt.Print("\r")
+		fmt.Print(getSpaces(maxLineWidth - 1))
+		fmt.Print("\r")
+	}
 	di.show = false
 	di.lock.Unlock()
 }
@@ -64,6 +70,21 @@ type Stats struct {
 	lock        sync.Mutex
 	progress    float64
 	currentPath string
+	matched     int
+	mismatched  int
+	missing     int
+	ignored     int
+}
+
+func (s *Stats) Clone() *Stats {
+	return &Stats{
+		progress:    s.progress,
+		currentPath: s.currentPath,
+		matched:     s.matched,
+		mismatched:  s.mismatched,
+		missing:     s.missing,
+		ignored:     s.ignored,
+	}
 }
 
 var (
@@ -79,7 +100,7 @@ func getSpaces(count int) string {
 	return strings.Repeat(" ", count)
 }
 
-const maxLineWidth = 119 // TODO: Make this dynamic
+const maxLineWidth = 120 // TODO: Make this dynamic
 
 func ensureLineWidths(data string) string {
 	if strings.HasSuffix(data, "\n") {
@@ -88,23 +109,23 @@ func ensureLineWidths(data string) string {
 	newData := ""
 	dataLines := strings.Split(data, "\n")
 	for _, line := range dataLines {
-		spaceCount := maxLineWidth - len(line) - (strings.Count(line, "\t") * 6)
+		spaceCount := maxLineWidth - utf8.RuneCountInString(line) - 1
 		newData += line + getSpaces(spaceCount) + "\n"
 	}
 	return newData
 }
 
 func writeToConsole(format string, a ...interface{}) {
-	info := time.Now().Format("[15:04:05] ") + fmt.Sprintf(format, a...)
-	info = ensureLineWidths(info)
-
-	fmt.Print("\r")
-	fmt.Print(info)
+	msg := time.Now().Format("[15:04:05] ") + fmt.Sprintf(format, a...)
+	msg = ensureLineWidths(msg)
 
 	displayInfo.lock.RLock()
 	if displayInfo.show {
 		fmt.Print("\r")
-		fmt.Print(displayInfo.info)
+	}
+	fmt.Print(msg)
+	if displayInfo.show {
+		fmt.Print(displayInfo.line)
 	}
 	displayInfo.lock.RUnlock()
 }
@@ -113,15 +134,16 @@ func reportMismatch(format string, a ...interface{}) {
 	writeToConsole(format, a...)
 }
 
-func displayProgress(info string) {
-	info = ensureLineWidths(info)
-	info = strings.Replace(info, "\n", "", -1)
-
-	fmt.Print("\r")
-	fmt.Print(info)
+func setDisplayInfo(line string) {
+	line = ensureLineWidths(line)
+	line = line[:len(line)-1]
 
 	displayInfo.lock.Lock()
-	displayInfo.info = info
+	displayInfo.line = line
+	if displayInfo.show {
+		fmt.Print("\r")
+		fmt.Print(displayInfo.line)
+	}
 	displayInfo.lock.Unlock()
 }
 
@@ -142,7 +164,9 @@ func statsGalore() {
 		shutdown.lock.RLock()
 		if shutdown.start {
 			shutdown.lock.RUnlock()
-			writeToConsole("Completed in %v", totalDurStr())
+			stats.lock.Lock()
+			writeToConsole("Completed in %v with %d matches, %d mismatches, %d missing, %d ignored.", totalDurStr(), stats.matched, stats.mismatched, stats.missing, stats.ignored)
+			stats.lock.Unlock()
 			shutdown.wg.Done()
 			return
 		}
@@ -150,21 +174,18 @@ func statsGalore() {
 
 		time.Sleep(refreshRate)
 
-		statsCache := Stats{}
-
 		stats.lock.Lock()
-		// Cache the stats
-		statsCache.progress = stats.progress
-		statsCache.currentPath = stats.currentPath
+		sc := stats.Clone()
 		stats.lock.Unlock()
 
-		info := fmt.Sprintf("[Time %v] [%.2f%%] ", totalDurStr(), statsCache.progress)
-		path := statsCache.currentPath
-		maxPathLen := maxLineWidth - len(info)
-		if len(path) > maxPathLen {
-			path = path[len(path)-maxPathLen:]
+		line := fmt.Sprintf("[%v] [%.2f%% %d√ %dD %dM %dI] ", totalDurStr(), sc.progress, sc.matched, sc.mismatched, sc.missing, sc.ignored)
+		path := sc.currentPath
+		maxPathLen := maxLineWidth - utf8.RuneCountInString(line) - 1
+		if utf8.RuneCountInString(path) > maxPathLen {
+			path = path[utf8.RuneCountInString(path)-maxPathLen:]
 		}
+		line += path
 
-		displayProgress(info + path)
+		setDisplayInfo(line)
 	}
 }
