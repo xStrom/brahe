@@ -17,15 +17,11 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
-
-	"golang.org/x/crypto/blake2b"
 )
 
 // TODO: Add back strict non-haystack check (for excessive files in target directories that don't exist in source)
@@ -142,7 +138,8 @@ func verifyDB(parentDir string) {
 	}
 }
 
-func ensureDBEntry(parentDir string, hash []byte, entry string) {
+// Returns true if any data was modified
+func ensureDBEntry(parentDir string, hash []byte, entry string) bool {
 	hashHex := fmt.Sprintf("%x", hash)
 	hashFileDir := filepath.Join(parentDir, dbDirectory, hashHex[:2])
 	if err := os.Mkdir(hashFileDir, 0666); err != nil && !os.IsExist(err) {
@@ -164,13 +161,14 @@ func ensureDBEntry(parentDir string, hash []byte, entry string) {
 	lines := strings.Split(string(b), "\n")
 	for _, line := range lines {
 		if line == entry {
-			return
+			return false
 		}
 	}
 	if _, err := f.WriteString(entry + "\n"); err != nil {
 		writeToConsole("Failed to add entry to file %v: %v", hashFile, err)
 		panic("")
 	}
+	return true
 }
 
 func hasDBEntry(parentDir string, hash []byte) bool {
@@ -210,7 +208,7 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		stats.currentPath = fullName
 		stats.lock.Unlock()
 
-		var deltaMatched, deltaMissing int
+		var deltaMatched, deltaMissing, deltaCopied int
 		if isDir {
 			if depth != 0 {
 				useDB(cfg, progressChunk, fullName, depth-1)
@@ -223,13 +221,43 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 
 			if cfg.buildDB {
 				// Write out the DB entry
-				ensureDBEntry(cfg.entries[1], hash, fullName)
-				deltaMatched++
+				if ensureDBEntry(cfg.entries[1], hash, fullName) {
+					deltaCopied++
+				} else {
+					deltaMatched++
+				}
 			} else if cfg.checkDB {
 				// Check if the DB entry exists
 				if !hasDBEntry(cfg.entries[0], hash) {
-					deltaMissing++
-					reportMismatch("MISSING %v", fullName)
+					// Copy it if requested
+					if len(cfg.copy) > 0 {
+						// TODO: Rewrite the function to keep track of either the base entry or something like that,
+						//       instead of this scanning to figure it out.
+						suffix := ""
+						for _, entry := range cfg.entries {
+							if strings.HasPrefix(fullName, entry) {
+								suffix = fullName[len(entry):]
+								break
+							}
+						}
+						if suffix == "" {
+							panic("Didn't find entry prefix!")
+						}
+						dst := filepath.Join(cfg.copy, suffix)
+						if err := os.MkdirAll(filepath.Dir(dst), 0666); err != nil {
+							writeToConsole("Failed to create directory %v because: %v", filepath.Dir(dst), err)
+							panic("")
+						}
+						if err := copyFile(fullName, dst); err != nil {
+							writeToConsole("Failed to copy %v to %v because: %v", fullName, dst, err)
+							panic("")
+						}
+						reportMismatch("COPIED %v", fullName)
+						deltaCopied++
+					} else {
+						reportMismatch("MISSING %v", fullName)
+						deltaMissing++
+					}
 				} else {
 					deltaMatched++
 				}
@@ -241,6 +269,7 @@ func useDB(cfg *Config, progressValue float64, dirName string, depth int) {
 		stats.progress += progressChunk
 		stats.matched += deltaMatched
 		stats.missing += deltaMissing
+		stats.copied += deltaCopied
 		stats.lock.Unlock()
 	}
 
@@ -362,46 +391,4 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 	stats.currentPath = ""
 	stats.progress += progressExtra
 	stats.lock.Unlock()
-}
-
-// Returns hash, MB/s
-func hashFile(name string) ([]byte, float64) {
-	t1 := time.Now()
-	totalBytes := 0
-
-	h, err := blake2b.New256(nil)
-	if err != nil {
-		writeToConsole("Failed to create blake2b hash: %v", err)
-		panic("")
-	}
-
-	f, err := os.Open(name)
-	if err != nil {
-		writeToConsole("Failed to open file: %v - %v", name, err)
-		panic("")
-	}
-	defer f.Close()
-
-	buff := make([]byte, 4194304) // 4 MiB
-	for {
-		n, err := f.Read(buff)
-		totalBytes += n
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			writeToConsole("Failed reading file: %v - %v", name, err)
-			panic("")
-		}
-		h.Write(buff[:n])
-	}
-
-	result := h.Sum(nil)
-
-	t2 := time.Now()
-	dur := t2.Sub(t1)
-	MBps := (float64(totalBytes) / 1000 / 1000) / dur.Seconds()
-
-	///writeToConsole("Hashed %v in %v - %v MB/s", name, dur, MBps)
-
-	return result, MBps
 }

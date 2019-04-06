@@ -70,6 +70,7 @@ type Config struct {
 	gapOpts            *GapOpts
 	buildDB            bool
 	checkDB            bool
+	copy               string
 }
 
 const AppName = "brahe"
@@ -104,14 +105,19 @@ func getConfig(arguments []string) (*Config, error) {
 		&cfg.buildDB,
 		"build-db",
 		false,
-		"Builds a hash database of all entries in [source] to [target1]",
+		"Builds a hash database of all entries in [source] to [target1].",
 	)
 	f.BoolVar(
 		&cfg.checkDB,
 		"check-db",
 		false,
-		"Checks all files in [target1] .. [targetN] against the hash database in [source]",
+		"Checks all files in [target1] .. [targetN] against the hash database in [source].",
 	)
+	f.StringVar(
+		&cfg.copy,
+		"copy",
+		"",
+		"Any files not found in the database with -check-db are copied into the provided `directory`.")
 	f.Usage = func() {
 		fmt.Fprintf(f.Output(), "Usage:\n\n%s [options] [source] [target1] .. [targetN]\n\n", AppName)
 		f.PrintDefaults()

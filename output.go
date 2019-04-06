@@ -74,6 +74,7 @@ type Stats struct {
 	mismatched  int
 	missing     int
 	ignored     int
+	copied      int
 }
 
 func (s *Stats) Clone() *Stats {
@@ -84,6 +85,7 @@ func (s *Stats) Clone() *Stats {
 		mismatched:  s.mismatched,
 		missing:     s.missing,
 		ignored:     s.ignored,
+		copied:      s.copied,
 	}
 }
 
@@ -165,7 +167,7 @@ func statsGalore() {
 		if shutdown.start {
 			shutdown.lock.RUnlock()
 			stats.lock.Lock()
-			writeToConsole("Completed in %v with %d matches, %d mismatches, %d missing, %d ignored.", totalDurStr(), stats.matched, stats.mismatched, stats.missing, stats.ignored)
+			writeToConsole("Completed in %v with %d matches, %d mismatches, %d missing, %d ignored, %d copied.", totalDurStr(), stats.matched, stats.mismatched, stats.missing, stats.ignored, stats.copied)
 			stats.lock.Unlock()
 			shutdown.wg.Done()
 			return
@@ -178,7 +180,7 @@ func statsGalore() {
 		sc := stats.Clone()
 		stats.lock.Unlock()
 
-		line := fmt.Sprintf("[%v] [%.2f%% %d√ %dD %dM %dI] ", totalDurStr(), sc.progress, sc.matched, sc.mismatched, sc.missing, sc.ignored)
+		line := fmt.Sprintf("[%v] [%.2f%% %d√ %dD %dM %dI %dC] ", totalDurStr(), sc.progress, sc.matched, sc.mismatched, sc.missing, sc.ignored, sc.copied)
 		path := sc.currentPath
 		maxPathLen := maxLineWidth - utf8.RuneCountInString(line) - 1
 		if utf8.RuneCountInString(path) > maxPathLen {
