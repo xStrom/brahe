@@ -1,4 +1,4 @@
-// Copyright 2016-2019 Kaur Kuut
+// Copyright 2016-2020 Kaur Kuut
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -183,8 +183,8 @@ func statsGalore() {
 		line := fmt.Sprintf("[%v] [%.2f%% %d√ %dD %dM %dI %dC] ", totalDurStr(), sc.progress, sc.matched, sc.mismatched, sc.missing, sc.ignored, sc.copied)
 		path := sc.currentPath
 		maxPathLen := maxLineWidth - utf8.RuneCountInString(line) - 1
-		if utf8.RuneCountInString(path) > maxPathLen {
-			path = path[utf8.RuneCountInString(path)-maxPathLen:]
+		if pathLen := utf8.RuneCountInString(path); pathLen > maxPathLen {
+			path = string([]rune(path)[pathLen-maxPathLen:])
 		}
 		line += path
 
