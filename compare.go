@@ -1,4 +1,4 @@
-// Copyright 2016-2019 Kaur Kuut
+// Copyright 2016-2020 Kaur Kuut
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -384,6 +384,72 @@ func compareDir(cfg *Config, progressValue float64, dirNames []string, depth int
 		stats.matched += deltaMatched
 		stats.mismatched += deltaMismatched
 		stats.missing += deltaMissing
+		stats.lock.Unlock()
+	}
+
+	stats.lock.Lock()
+	stats.currentPath = ""
+	stats.progress += progressExtra
+	stats.lock.Unlock()
+}
+
+func deleteDupes(cfg *Config, progressValue float64, dirName string, depth int, hashes map[[32]byte]struct{}) {
+	fileInfos := getFileList(dirName)
+	fiCount := len(fileInfos)
+
+	progressChunk, progressExtra := splitProgressValue(progressValue, fiCount)
+
+	for i := 0; i < fiCount; i++ {
+		name := fileInfos[i].Name()
+		fullName := filepath.Join(dirName, name)
+		isDir := fileInfos[i].IsDir()
+
+		if (isDir && cfg.ignoreSpecificDirs[fullName]) || (!isDir && cfg.ignoreFiles[name]) {
+			stats.lock.Lock()
+			stats.progress += progressChunk
+			stats.ignored++
+			stats.lock.Unlock()
+			continue
+		}
+
+		stats.lock.Lock()
+		stats.currentPath = fullName
+		stats.lock.Unlock()
+
+		var deltaMatched, deltaMismatched int
+		if isDir {
+			if depth != 0 {
+				deleteDupes(cfg, progressChunk, fullName, depth-1, hashes)
+				continue // Progress was already incremented
+			}
+		} else {
+			// Compare file hashes
+			hash, _ := hashFile(fullName)
+			//writeToConsole("OK %.4f MB/s %x %v", speed, hash, fullName)
+
+			var h [32]byte
+			copy(h[:], hash[:])
+
+			if _, ok := hashes[h]; ok {
+				// Duplicate
+				deltaMatched++
+				//reportMismatch("DUPE %v", fullName)
+				if err := os.Remove(fullName); err != nil {
+					writeToConsole("Failed to delete %v because: %v", fullName, err)
+					panic("")
+				}
+			} else {
+				// New entry
+				deltaMismatched++
+				hashes[h] = struct{}{}
+			}
+		}
+
+		// Increment the progress
+		stats.lock.Lock()
+		stats.progress += progressChunk
+		stats.matched += deltaMatched
+		stats.mismatched += deltaMismatched
 		stats.lock.Unlock()
 	}
 

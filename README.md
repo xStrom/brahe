@@ -13,6 +13,8 @@ brahe [options] [source] [target1] .. [targetN]
         Builds a hash database of all entries in [source] to [target1]
   -check-db
         Checks all files in [target1] .. [targetN] against the hash database in [source]
+  -delete-dupes
+        Deletes any duplicate files in [source].
   -depth int
         Specify how deep into the directory hierarchy to look into.
         Use 0 to check only immediate files/directories with no traversing.
@@ -32,6 +34,6 @@ This project is not actively maintained, however feel free to send bug reports o
 
 # About
 
-© Copyright 2016 - 2019 [Kaur Kuut](https://www.kaurkuut.com)
+© Copyright 2016 - 2020 [Kaur Kuut](https://www.kaurkuut.com)
 
 Licensed under the [Apache 2.0 license](http://www.apache.org/licenses/LICENSE-2.0)

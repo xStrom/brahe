@@ -1,4 +1,4 @@
-// Copyright 2016-2019 Kaur Kuut
+// Copyright 2016-2020 Kaur Kuut
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,6 +70,7 @@ type Config struct {
 	gapOpts            *GapOpts
 	buildDB            bool
 	checkDB            bool
+	deleteDupes        bool
 	copy               string
 }
 
@@ -113,6 +114,12 @@ func getConfig(arguments []string) (*Config, error) {
 		false,
 		"Checks all files in [target1] .. [targetN] against the hash database in [source].",
 	)
+	f.BoolVar(
+		&cfg.deleteDupes,
+		"delete-dupes",
+		false,
+		"Deletes any duplicate files in [source].",
+	)
 	f.StringVar(
 		&cfg.copy,
 		"copy",
@@ -135,7 +142,7 @@ func getConfig(arguments []string) (*Config, error) {
 		return nil, failf("Can't deal with the hash database without looking at file contents! Check your options.")
 	}
 	minArgs := 2
-	if cfg.gapOpts != nil {
+	if cfg.gapOpts != nil || cfg.deleteDupes {
 		minArgs = 1
 	}
 	args := f.Args()
@@ -208,6 +215,8 @@ func main() {
 
 	if cfg.gapOpts != nil {
 		findGaps(cfg, 100.0, cfg.entries)
+	} else if cfg.deleteDupes {
+		deleteDupes(cfg, 100.0, cfg.entries[0], cfg.depth, map[[32]byte]struct{}{})
 	} else if cfg.buildDB {
 		initDB(cfg.entries[1])
 		useDB(cfg, 100.0, cfg.entries[0], cfg.depth)
